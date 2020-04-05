@@ -131,8 +131,12 @@ func (s *ServiceDeclaration) Name() string {
 	return s.node.Name()
 }
 
+func (s *ServiceDeclaration) Annotations() Annotations {
+	return s.annotations
+}
+
 func (s *ServiceDeclaration) Path() string {
-	return s.annotations[aPath]
+	return s.Annotations().Get(aPath)
 }
 
 func (s *ServiceDeclaration) Endpoints() []EndpointDeclaration {
@@ -150,6 +154,62 @@ func (e *EndpointDeclaration) Name() string {
 	return e.node.Name()
 }
 
+func (e *EndpointDeclaration) Annotations() Annotations {
+	return e.annotations
+}
+
 func (e *EndpointDeclaration) Path() string {
-	return e.annotations[aPath]
+	return e.Annotations().Get(aPath)
+}
+
+// ParamDeclaration captures the information for method in- and output params.
+type ParamDeclaration struct {
+	node gotype.Type
+}
+
+func (p *ParamDeclaration) Name() string {
+	return p.node.Name()
+}
+
+func (p *ParamDeclaration) Type() string {
+	var (
+		decl = p.node.Declaration()
+		name = decl.Name()
+	)
+
+	if pkgName := decl.PkgPath(); pkgName != "" && !p.IsBuiltIn() {
+		name = pkgName + "/" + name
+	}
+
+	return name
+}
+
+func (p *ParamDeclaration) IsBuiltIn() bool {
+	return gotype.IsBuiltin(p.node.Declaration())
+}
+
+func (e *EndpointDeclaration) InputParams() []ParamDeclaration {
+	var (
+		fn     = e.node.Declaration()
+		params []ParamDeclaration
+	)
+
+	for i, length := 0, fn.NumIn(); i < length; i++ {
+		params = append(params, ParamDeclaration{node: fn.In(i)})
+	}
+
+	return params
+}
+
+func (e *EndpointDeclaration) OutputParams() []ParamDeclaration {
+	var (
+		fn     = e.node.Declaration()
+		params []ParamDeclaration
+	)
+
+	for i, length := 0, fn.NumOut(); i < length; i++ {
+		params = append(params, ParamDeclaration{node: fn.Out(i)})
+	}
+
+	return params
 }

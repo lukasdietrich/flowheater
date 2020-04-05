@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"net/http"
+	"strings"
+)
 
 type ServiceCollection struct {
 	PackageName string
@@ -35,13 +39,21 @@ type Service struct {
 }
 
 type Endpoint struct {
-	Service  *Service
-	FuncName string
-	Path     string
+	Service    *Service
+	FuncName   string
+	Path       string
+	HttpMethod string
+	Resolvers  []Resolver
+	Params     []string
 }
 
 func (e *Endpoint) WrapperFunc() string {
 	return fmt.Sprintf("_handle_%s_%s", e.Service.TypeName, e.FuncName)
+}
+
+type Resolver struct {
+	VarName  string
+	TypeName string
 }
 
 func analyzeService(declaration ServiceDeclaration) (*Service, error) {
@@ -69,8 +81,39 @@ func analyzeService(declaration ServiceDeclaration) (*Service, error) {
 }
 
 func analyzeEndpoint(declaration EndpointDeclaration) (*Endpoint, error) {
+	var (
+		resolvers  []Resolver
+		params     []string
+		httpMethod = http.MethodGet
+	)
+
+	if declaration.Annotations().Exists(aMethod) {
+		httpMethod = strings.ToUpper(declaration.Annotations().Get(aMethod))
+	}
+
+	for i, paramDeclaration := range declaration.InputParams() {
+		switch typeName := paramDeclaration.Type(); typeName {
+		case "net/http/ResponseWriter":
+			params = append(params, "w")
+
+		case "net/http/*Request":
+			params = append(params, "r")
+
+		default:
+			varName := fmt.Sprintf("param%d", i)
+			params = append(params, varName)
+			resolvers = append(resolvers, Resolver{
+				VarName:  varName,
+				TypeName: typeName,
+			})
+		}
+	}
+
 	return &Endpoint{
-		FuncName: declaration.Name(),
-		Path:     declaration.Path(),
+		FuncName:   declaration.Name(),
+		Path:       declaration.Path(),
+		HttpMethod: httpMethod,
+		Resolvers:  resolvers,
+		Params:     params,
 	}, nil
 }
