@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dave/jennifer/jen"
 )
@@ -48,29 +49,36 @@ func renderRouterHandler(gen *jen.File, c *ServiceCollection) {
 		Id("Handler").
 		Params().
 		Qual(pHttp, "Handler").
-		BlockFunc(func(g *jen.Group) {
-			g.Id("h").Op(":=").Qual(pChi, "NewRouter").Call()
-			g.Line()
+		BlockFunc(func(gen *jen.Group) {
+			// h := chi.NewRouter()
+			gen.Id("h").Op(":=").Qual(pChi, "NewRouter").Call()
+			gen.Line()
 
 			for _, service := range c.Services {
-				g.Id("h").Op(".").Id("Route").Call(
-					jen.Lit(service.Path),
-					jen.Func().Params(jen.Id("r").Qual(pChi, "Router")).
-						BlockFunc(func(g *jen.Group) {
-							for _, endpoint := range service.Endpoints {
-								g.Id("r").Op(".").Id("Get").Call(
-									jen.Lit(endpoint.Path),
-									jen.Id("s").Op(".").Id(endpoint.WrapperFunc()),
-								)
-							}
-						}),
-				)
-
-				g.Line()
+				gen.Id("h").Op(".").Id("Route").
+					CallFunc(renderRouterRegisterService(service))
+				gen.Line()
 			}
 
-			g.Return(jen.Id("h"))
+			// return h
+			gen.Return(jen.Id("h"))
 		})
+}
+
+func renderRouterRegisterService(service *Service) func(*jen.Group) {
+	return func(gen *jen.Group) {
+		gen.Lit(service.Path)
+		gen.Func().Params(jen.Id("r").Qual(pChi, "Router")).
+			BlockFunc(func(g *jen.Group) {
+				for _, endpoint := range service.Endpoints {
+					m := strings.Title(strings.ToLower(endpoint.HttpMethod))
+					g.Id("r").Op(".").Id(m).Call(
+						jen.Lit(endpoint.Path),
+						jen.Id("s").Op(".").Id(endpoint.WrapperFunc()),
+					)
+				}
+			})
+	}
 }
 
 func renderRouterEndpoints(gen *jen.File, c *ServiceCollection) {
@@ -85,37 +93,43 @@ func renderEndpointWrapper(gen *jen.File, endpoint *Endpoint) {
 	comment := fmt.Sprintf("%s wraps the endpoint %s#%s.",
 		endpoint.WrapperFunc(), endpoint.Service.TypeName, endpoint.FuncName)
 
-	gen.
-		Comment(comment).Line().
+	// func (s *ServiceRouter) func _handle_<Service>_<Endpoint>(
+	//   w http.ResponseWriter,
+	//   r *http.Request,
+	// ) { ... }
+	gen.Comment(comment).Line().
 		Func().
 		Params(jRouterReceiver).
 		Id(endpoint.WrapperFunc()).
-		ParamsFunc(func(g *jen.Group) {
-			g.Id("w").Qual(pHttp, "ResponseWriter")
-			g.Id("r").Op(jPtr).Qual(pHttp, "Request")
-		}).
-		BlockFunc(func(g *jen.Group) {
-			for _, resolver := range endpoint.Resolvers {
-				renderResolver(g, resolver)
-			}
+		Params(
+			jen.Id("w").Qual(pHttp, "ResponseWriter"),
+			jen.Id("r").Op(jPtr).Qual(pHttp, "Request"),
+		).
+		BlockFunc(renderEndpointWrapperBody(endpoint))
 
-			if len(endpoint.Resolvers) > 0 {
-				g.Line()
-			}
+}
 
-			g.
-				Id("s").
-				Op(".").
-				Id(endpoint.Service.TypeName).
-				Op(".").
-				Id(endpoint.FuncName).
-				CallFunc(func(g *jen.Group) {
-					for _, param := range endpoint.Params {
-						g.Id(param)
-					}
-				})
-		})
+func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
+	return func(gen *jen.Group) {
+		for _, resolver := range endpoint.Resolvers {
+			// param0 := chi.URLParam("<paramName>")
+			renderResolver(gen, resolver)
+		}
 
+		if len(endpoint.Resolvers) > 0 {
+			gen.Line()
+		}
+
+		// s.<Service>.<Endpoint>(<Params>...)
+		gen.Id("s").
+			Op(".").Id(endpoint.Service.TypeName).
+			Op(".").Id(endpoint.FuncName).
+			CallFunc(func(gen *jen.Group) {
+				for _, param := range endpoint.Params {
+					gen.Id(param)
+				}
+			})
+	}
 }
 
 func renderResolver(gen *jen.Group, resolver Resolver) {
@@ -123,7 +137,7 @@ func renderResolver(gen *jen.Group, resolver Resolver) {
 	case "string":
 		gen.Id(resolver.VarName).Op(":=").Qual(pChi, "URLParam").Call(
 			jen.Id("r"),
-			jen.Lit(resolver.VarName),
+			jen.Lit(resolver.ParamName),
 		)
 	}
 }

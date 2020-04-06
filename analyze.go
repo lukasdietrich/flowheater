@@ -52,8 +52,9 @@ func (e *Endpoint) WrapperFunc() string {
 }
 
 type Resolver struct {
-	VarName  string
-	TypeName string
+	VarName   string
+	ParamName string
+	TypeName  string
 }
 
 func analyzeService(declaration ServiceDeclaration) (*Service, error) {
@@ -103,8 +104,9 @@ func analyzeEndpoint(declaration EndpointDeclaration) (*Endpoint, error) {
 			varName := fmt.Sprintf("param%d", i)
 			params = append(params, varName)
 			resolvers = append(resolvers, Resolver{
-				VarName:  varName,
-				TypeName: typeName,
+				VarName:   varName,
+				ParamName: paramDeclaration.Name(),
+				TypeName:  typeName,
 			})
 		}
 	}
