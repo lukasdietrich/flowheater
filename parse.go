@@ -1,6 +1,8 @@
 package main
 
 import (
+	"go/build"
+	"log"
 	"strings"
 
 	"github.com/wzshiming/gotype"
@@ -58,21 +60,37 @@ func (a Annotations) Exists(key string) bool {
 // SourcePackage is a collection of annotated services and their endpoints
 // found in a user provided go source package.
 type SourcePackage struct {
+	info     *build.Package
 	node     gotype.Type
 	services []ServiceDeclaration
 }
 
 func ParsePackage(packageName string) (*SourcePackage, error) {
 	importer := gotype.NewImporter()
+
+	log.Printf("Looking up package %s", packageName)
+
+	info, err := importer.ImportBuild(packageName, "")
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Parsing package %s", info.Dir)
+
 	node, err := importer.Import(packageName, "")
 	if err != nil {
 		return nil, err
 	}
 
 	return &SourcePackage{
+		info:     info,
 		node:     node,
 		services: findServiceDeclarations(node),
 	}, nil
+}
+
+func (s *SourcePackage) Filepath() string {
+	return s.info.Dir
 }
 
 // Name returns the package name.
@@ -91,6 +109,8 @@ func findServiceDeclarations(pkgNode gotype.Type) []ServiceDeclaration {
 	for i, length := 0, pkgNode.NumChild(); i < length; i++ {
 		if node := pkgNode.Child(i); node.Kind() == gotype.Struct {
 			if a := parseAnnotations(node); a.Exists(aPath) {
+				log.Printf("\t=> Found %s", node)
+
 				services = append(services, ServiceDeclaration{
 					node:        node,
 					annotations: a,
@@ -109,6 +129,7 @@ func findEndpointDeclarations(serviceNode gotype.Type) []EndpointDeclaration {
 	for i, length := 0, serviceNode.NumMethod(); i < length; i++ {
 		node := serviceNode.Method(i)
 		if a := parseAnnotations(node); a.Exists(aPath) {
+			log.Printf("\t\t=> Found %s.%s", serviceNode, node)
 			endpoints = append(endpoints, EndpointDeclaration{
 				node:        node,
 				annotations: a,
@@ -171,21 +192,44 @@ func (p *ParamDeclaration) Name() string {
 	return p.node.Name()
 }
 
-func (p *ParamDeclaration) Type() string {
+func (p *ParamDeclaration) deref() (int, gotype.Type) {
 	var (
-		decl = p.node.Declaration()
-		name = decl.Name()
+		depth = 0
+		node  = p.node.Declaration()
 	)
 
-	if pkgName := decl.PkgPath(); pkgName != "" && !p.IsBuiltIn() {
-		name = pkgName + "/" + name
+	for node.Kind() == gotype.Ptr {
+		depth++
+		node = node.Elem()
 	}
 
-	return name
+	return depth, node
+}
+
+func (p *ParamDeclaration) derefType() gotype.Type {
+	_, t := p.deref()
+	return t
+}
+
+func (p *ParamDeclaration) TypePackage() string {
+	return p.derefType().PkgPath()
+}
+
+func (p *ParamDeclaration) TypeName() string {
+	return p.derefType().Name()
 }
 
 func (p *ParamDeclaration) IsBuiltIn() bool {
-	return gotype.IsBuiltin(p.node.Declaration())
+	return gotype.IsBuiltin(p.derefType())
+}
+
+func (p *ParamDeclaration) IsLocal() bool {
+	return !strings.ContainsRune(p.node.Declaration().String(), '.')
+}
+
+func (p *ParamDeclaration) PointerDepth() int {
+	depth, _ := p.deref()
+	return depth
 }
 
 func (e *EndpointDeclaration) InputParams() []ParamDeclaration {

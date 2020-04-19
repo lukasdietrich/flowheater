@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	pHttp = "net/http"
-	pChi  = "github.com/go-chi/chi"
+	pHttp    = "net/http"
+	pChi     = "github.com/go-chi/chi"
+	pStrconv = "strconv"
+	pJson    = "encoding/json"
 )
 
 var (
@@ -105,18 +107,19 @@ func renderEndpointWrapper(gen *jen.File, endpoint *Endpoint) {
 			jen.Id("w").Qual(pHttp, "ResponseWriter"),
 			jen.Id("r").Op(jPtr).Qual(pHttp, "Request"),
 		).
+		Params(jen.Id("err").Id("error")).
 		BlockFunc(renderEndpointWrapperBody(endpoint))
 
 }
 
 func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 	return func(gen *jen.Group) {
-		for _, resolver := range endpoint.Resolvers {
+		for _, param := range endpoint.InputParams {
 			// param0 := chi.URLParam("<paramName>")
-			renderResolver(gen, resolver)
+			renderInputParam(gen, param)
 		}
 
-		if len(endpoint.Resolvers) > 0 {
+		if len(endpoint.InputParams) > 0 {
 			gen.Line()
 		}
 
@@ -125,19 +128,54 @@ func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 			Op(".").Id(endpoint.Service.TypeName).
 			Op(".").Id(endpoint.FuncName).
 			CallFunc(func(gen *jen.Group) {
-				for _, param := range endpoint.Params {
-					gen.Id(param)
+				for _, param := range endpoint.InputVars {
+					gen.Id(strings.Repeat("&", param.PointerDepth) + param.VarName)
 				}
 			})
+
+		gen.Return()
 	}
 }
 
-func renderResolver(gen *jen.Group, resolver Resolver) {
-	switch resolver.TypeName {
-	case "string":
-		gen.Id(resolver.VarName).Op(":=").Qual(pChi, "URLParam").Call(
+func renderInputParam(gen *jen.Group, param InputParam) {
+	switch param.ParamKind {
+	case KindStringParam:
+		gen.Id(param.VarName).Op(":=").Qual(pChi, "URLParam").Call(
 			jen.Id("r"),
-			jen.Lit(resolver.ParamName),
+			jen.Lit(param.ParamName),
 		)
+
+	case KindConvertParam:
+		renderConvertParam(gen, param)
+
+	case KindPayloadParam:
+		renderPayloadParam(gen, param)
 	}
+}
+
+func renderConvertParam(gen *jen.Group, param InputParam) {
+	switch param.TypeName {
+	case "int", "int8", "int16", "int32", "int64":
+		gen.Id(param.ParamName+"Int64").Op(",").Id("err").Op(":=").
+			Qual(pStrconv, "ParseInt").Call(
+			jen.Id(param.InputVars[0].VarName),
+			jen.Lit(10),
+			jen.Lit(64),
+		)
+
+		renderIfErr(gen)
+		gen.Id(param.VarName).Op(":=").Id(param.TypeName).Call(jen.Id(param.ParamName + "Int64"))
+	}
+
+}
+
+func renderPayloadParam(gen *jen.Group, param InputParam) {
+	gen.Defer().Id("r").Op(".").Id("Body").Op(".").Id("Close").Call()
+	gen.Var().Id(param.VarName).Id(param.TypeName)
+	gen.Id("err").Op("=").Qual(pJson, "NewDecoder").Call(jen.Id("r").Op(".").Id("Body")).Op(".").Id("Decode").Call(jen.Op("&").Id(param.VarName))
+	renderIfErr(gen)
+}
+
+func renderIfErr(gen *jen.Group) {
+	gen.If(jen.Id("err").Op("!=").Nil()).Block(jen.Return().Id("err"))
 }
