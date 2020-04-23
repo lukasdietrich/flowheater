@@ -167,7 +167,7 @@ func renderEndpointWrapper(endpoint *Endpoint) jen.Code {
 			jen.Id("w").Qual(pkgHttp, "ResponseWriter"),
 			jen.Id("r").Op("*").Qual(pkgHttp, "Request"),
 		).
-		Params(jen.Id("err").Id("error")).
+		Params(jen.Id("error")).
 		BlockFunc(renderEndpointWrapperBody(endpoint)).
 		Line()
 }
@@ -193,17 +193,14 @@ func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 				}
 			})
 
-		gen.Return()
+		gen.Return().Nil()
 	}
 }
 
 func renderInputParam(gen *jen.Group, param InputParam) {
 	switch param.ParamKind {
 	case KindStringParam:
-		gen.Id(param.VarName).Op(":=").Qual(pkgChi, "URLParam").Call(
-			jen.Id("r"),
-			jen.Lit(param.ParamName),
-		)
+		renderStringParam(gen, param)
 
 	case KindConvertParam:
 		renderConvertParam(gen, param)
@@ -211,32 +208,37 @@ func renderInputParam(gen *jen.Group, param InputParam) {
 	case KindPayloadParam:
 		renderPayloadParam(gen, param)
 	}
+
+	gen.Line()
+}
+
+func renderStringParam(gen *jen.Group, param InputParam) {
+	gen.Comment(fmt.Sprintf("Extract url parameter %s.", param.ParamName))
+	gen.Id(param.VarName).Op(":=").Qual(pkgChi, "URLParam").Call(
+		jen.Id("r"),
+		jen.Lit(param.ParamName),
+	)
 }
 
 func renderConvertParam(gen *jen.Group, param InputParam) {
+	stringVar := param.InputVars[0]
+
+	gen.Comment(fmt.Sprintf("Convert %s to %s.", stringVar.VarName, param.TypeName))
+
 	switch param.TypeName {
-	case "int", "int8", "int16", "int32", "int64":
-		tempName := param.VarName + "Int64"
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64":
 
-		gen.List(jen.Id(tempName), jen.Id("err")).Op(":=").
-			Qual(pkgStrconv, "ParseInt").Call(
-			jen.Id(param.InputVars[0].VarName),
-			jen.Lit(10),
-			jen.Lit(64),
+		var (
+			unsizedType = strings.TrimRight(param.TypeName, "123468")
+			parseFunc   = "Parse" + strings.Title(unsizedType)
+			tempName    = param.VarName + "b64"
 		)
 
-		renderIfErr(gen)
-		gen.Id(param.VarName).Op(":=").Id(param.TypeName).Call(jen.Id(tempName))
-
-	case "uint", "uint8", "uint16", "uint32", "uint64":
-		tempName := param.VarName + "Uint64"
-
-		gen.List(jen.Id(tempName), jen.Id("err")).Op(":=").
-			Qual(pkgStrconv, "ParseUint").Call(
-			jen.Id(param.InputVars[0].VarName),
-			jen.Lit(10),
-			jen.Lit(64),
-		)
+		gen.List(jen.Id(tempName), jen.Id("err")).
+			Op(":=").
+			Qual(pkgStrconv, parseFunc).
+			Call(jen.Id(stringVar.VarName), jen.Lit(10), jen.Lit(64))
 
 		renderIfErr(gen)
 		gen.Id(param.VarName).Op(":=").Id(param.TypeName).Call(jen.Id(tempName))
@@ -245,20 +247,22 @@ func renderConvertParam(gen *jen.Group, param InputParam) {
 		gen.List(jen.Id(param.VarName), jen.Id("err")).
 			Op(":=").
 			Qual(pkgStrconv, "ParseBool").
-			Call(jen.Id(param.InputVars[0].VarName))
+			Call(jen.Id(stringVar.VarName))
 
 		renderIfErr(gen)
 	}
-
 }
 
 func renderPayloadParam(gen *jen.Group, param InputParam) {
 	gen.Defer().Id("r").Dot("Body").Dot("Close").Call()
 	gen.Var().Id(param.VarName).Id(param.TypeName)
-	gen.Id("err").Op("=").
-		Qual(pkgJson, "NewDecoder").Call(jen.Id("r").Dot("Body")).
-		Dot("Decode").Call(jen.Op("&").Id(param.VarName))
-	renderIfErr(gen)
+	gen.If(
+		jen.Id("err").
+			Op(":=").
+			Qual(pkgJson, "NewDecoder").Call(jen.Id("r").Dot("Body")).
+			Dot("Decode").Call(jen.Op("&").Id(param.VarName)),
+		jen.Id("err").Op("!=").Nil(),
+	).Block(jen.Return().Id("err"))
 }
 
 func renderIfErr(gen *jen.Group) {
