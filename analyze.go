@@ -39,12 +39,14 @@ type Service struct {
 }
 
 type Endpoint struct {
-	Service     *Service
-	FuncName    string
-	Path        string
-	HttpMethod  string
-	InputVars   []InputVar
-	InputParams InputParamSlice
+	Service      *Service
+	FuncName     string
+	Path         string
+	HttpMethod   string
+	InputVars    []InputVar
+	InputParams  InputParamSlice
+	ReturnsValue bool
+	ReturnsError bool
 }
 
 func (e *Endpoint) WrapperFunc() string {
@@ -237,16 +239,16 @@ func (i *InputParamSlice) resolvePayloadParam(decl ParamDeclaration) (*InputVar,
 	}, nil
 }
 
-func analyzeService(declaration ServiceDeclaration) (*Service, error) {
+func analyzeService(decl ServiceDeclaration) (*Service, error) {
 	var (
 		endpoints []*Endpoint
 		service   = Service{
-			TypeName: declaration.Name(),
-			Path:     declaration.Path(),
+			TypeName: decl.Name(),
+			Path:     decl.Path(),
 		}
 	)
 
-	for _, endpointDeclaration := range declaration.Endpoints() {
+	for _, endpointDeclaration := range decl.Endpoints() {
 		endpoint, err := analyzeEndpoint(endpointDeclaration)
 		if err != nil {
 			return nil, fmt.Errorf("analyzing endpoint %s: %v",
@@ -261,29 +263,63 @@ func analyzeService(declaration ServiceDeclaration) (*Service, error) {
 	return &service, nil
 }
 
-func analyzeEndpoint(declaration EndpointDeclaration) (*Endpoint, error) {
+func analyzeEndpoint(decl EndpointDeclaration) (*Endpoint, error) {
 	var (
 		inputVars   []InputVar
 		inputParams InputParamSlice
 		httpMethod  = http.MethodGet
 	)
 
-	if declaration.Annotations().Exists(aMethod) {
-		httpMethod = strings.ToUpper(declaration.Annotations().Get(aMethod))
+	if decl.Annotations().Exists(aMethod) {
+		httpMethod = strings.ToUpper(decl.Annotations().Get(aMethod))
 	}
 
-	inputVars, err := inputParams.resolveParams(declaration.InputParams())
+	inputVars, err := inputParams.resolveParams(decl.InputParams())
 	if err != nil {
 		return nil, err
 	}
 
 	inputParams.movePayloadLast()
 
+	returnsValue, returnsError, err := analyzeEndpointOutput(decl.OutputParams())
+	if err != nil {
+		return nil, err
+	}
+
 	return &Endpoint{
-		FuncName:    declaration.Name(),
-		Path:        declaration.Path(),
-		HttpMethod:  httpMethod,
-		InputVars:   inputVars,
-		InputParams: inputParams,
+		FuncName:     decl.Name(),
+		Path:         decl.Path(),
+		HttpMethod:   httpMethod,
+		InputVars:    inputVars,
+		InputParams:  inputParams,
+		ReturnsValue: returnsValue,
+		ReturnsError: returnsError,
 	}, nil
+}
+
+func analyzeEndpointOutput(params []ParamDeclaration) (bool, bool, error) {
+	switch len(params) {
+	case 0:
+		return false, false, nil
+
+	case 1:
+		isErr := isErrorParam(params[0])
+		return !isErr, isErr, nil
+
+	case 2:
+		if !isErrorParam(params[1]) {
+			return false, false, fmt.Errorf(
+				"the second return value must be of type error")
+		}
+
+		return true, true, nil
+
+	default:
+		return false, false, fmt.Errorf(
+			"an endpoint can only return 1 or 2 values: either a value, an error or both")
+	}
+}
+
+func isErrorParam(param ParamDeclaration) bool {
+	return param.IsBuiltIn() && param.TypeName() == "error"
 }

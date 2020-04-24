@@ -174,6 +174,8 @@ func renderEndpointWrapper(endpoint *Endpoint) jen.Code {
 
 func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 	return func(gen *jen.Group) {
+		gen.Defer().Id("r").Dot("Body").Dot("Close").Call()
+
 		for _, param := range endpoint.InputParams {
 			// param0 := chi.URLParam("<paramName>")
 			renderInputParam(gen, param)
@@ -184,7 +186,7 @@ func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 		}
 
 		// s.<Service>.<Endpoint>(<Params>...)
-		gen.Id("s").
+		callFunc := jen.Id("s").
 			Dot(endpoint.Service.TypeName).
 			Dot(endpoint.FuncName).
 			CallFunc(func(gen *jen.Group) {
@@ -193,7 +195,33 @@ func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 				}
 			})
 
-		gen.Return().Nil()
+		if !endpoint.ReturnsError && !endpoint.ReturnsValue {
+			gen.Add(callFunc)
+			gen.Return().Nil()
+		} else if endpoint.ReturnsError && !endpoint.ReturnsValue {
+			gen.Return().Add(callFunc)
+		} else {
+			gen.
+				ListFunc(func(gen *jen.Group) {
+					if endpoint.ReturnsValue {
+						gen.Id("val")
+					}
+
+					if endpoint.ReturnsError {
+						gen.Id("err")
+					}
+				}).
+				Op(":=").
+				Add(callFunc)
+
+			if endpoint.ReturnsError {
+				renderIfErr(gen)
+			}
+
+			gen.Return().
+				Qual(pkgJson, "NewEncoder").Call(jen.Id("w")).
+				Dot("Encode").Call(jen.Op("&").Id("val"))
+		}
 	}
 }
 
@@ -254,7 +282,6 @@ func renderConvertParam(gen *jen.Group, param InputParam) {
 }
 
 func renderPayloadParam(gen *jen.Group, param InputParam) {
-	gen.Defer().Id("r").Dot("Body").Dot("Close").Call()
 	gen.Var().Id(param.VarName).Id(param.TypeName)
 	gen.If(
 		jen.Id("err").
