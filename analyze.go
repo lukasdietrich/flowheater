@@ -115,14 +115,8 @@ func (i *InputParamSlice) resolveParam(decl ParamDeclaration) (*InputVar, error)
 		return nil, fmt.Errorf("%s: pointers of pointers are not supported", decl.Name())
 	}
 
-	if decl.TypePackage() == "net/http" {
-		if decl.TypeName() == "Request" && decl.PointerDepth() == 1 {
-			return &InputVar{VarName: "r"}, nil
-		}
-
-		if decl.TypeName() == "ResponseWriter" {
-			return &InputVar{VarName: "w"}, nil
-		}
+	if v := i.resolveNativeParam(decl); v != nil {
+		return v, nil
 	}
 
 	if decl.IsBuiltIn() {
@@ -132,6 +126,26 @@ func (i *InputParamSlice) resolveParam(decl ParamDeclaration) (*InputVar, error)
 	}
 
 	return nil, fmt.Errorf("could not resolve param '%s %s'", decl.Name(), decl.TypeName())
+}
+
+func (i *InputParamSlice) resolveNativeParam(decl ParamDeclaration) *InputVar {
+	if decl.TypePackage() == "net/http" {
+		if decl.TypeName() == "Request" && decl.PointerDepth() == 1 {
+			return &InputVar{VarName: "r"}
+		}
+
+		if decl.TypeName() == "ResponseWriter" && decl.PointerDepth() == 0 {
+			return &InputVar{VarName: "w"}
+		}
+	}
+
+	if decl.TypePackage() == "context" {
+		if decl.TypeName() == "Context" && decl.PointerDepth() == 0 {
+			return &InputVar{VarName: "r.Context()"}
+		}
+	}
+
+	return nil
 }
 
 func (i *InputParamSlice) resolveBuiltinParam(decl ParamDeclaration) (*InputVar, error) {
