@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	aPath   = "path"
-	aMethod = "method"
+	aPath    = "path"
+	aMethod  = "method"
+	mResolve = "resolveParam"
 )
 
 // Annotations is a map of key-value pairs.
@@ -60,9 +61,10 @@ func (a Annotations) Exists(key string) bool {
 // SourcePackage is a collection of annotated services and their endpoints
 // found in a user provided go source package.
 type SourcePackage struct {
-	info     *build.Package
-	node     gotype.Type
-	services []ServiceDeclaration
+	info      *build.Package
+	node      gotype.Type
+	services  []ServiceDeclaration
+	resolvers []ResolverDeclaration
 }
 
 func ParsePackage(packageName string) (*SourcePackage, error) {
@@ -83,9 +85,10 @@ func ParsePackage(packageName string) (*SourcePackage, error) {
 	}
 
 	return &SourcePackage{
-		info:     info,
-		node:     node,
-		services: findServiceDeclarations(node),
+		info:      info,
+		node:      node,
+		services:  findServiceDeclarations(node),
+		resolvers: findResolverDeclarations(node),
 	}, nil
 }
 
@@ -109,7 +112,7 @@ func findServiceDeclarations(pkgNode gotype.Type) []ServiceDeclaration {
 	for i, length := 0, pkgNode.NumChild(); i < length; i++ {
 		if node := pkgNode.Child(i); node.Kind() == gotype.Struct {
 			if a := parseAnnotations(node); a.Exists(aPath) {
-				log.Printf("\t=> Found %s", node)
+				log.Printf("\t=> Found service declaration: %s", node)
 
 				services = append(services, ServiceDeclaration{
 					node:        node,
@@ -129,7 +132,8 @@ func findEndpointDeclarations(serviceNode gotype.Type) []EndpointDeclaration {
 	for i, length := 0, serviceNode.NumMethod(); i < length; i++ {
 		node := serviceNode.Method(i)
 		if a := parseAnnotations(node); a.Exists(aPath) {
-			log.Printf("\t\t=> Found %s.%s", serviceNode, node)
+			log.Printf("\t\t=> Found endpoint declaration: %s.%s",
+				serviceNode, node)
 			endpoints = append(endpoints, EndpointDeclaration{
 				node:        node,
 				annotations: a,
@@ -138,6 +142,23 @@ func findEndpointDeclarations(serviceNode gotype.Type) []EndpointDeclaration {
 	}
 
 	return endpoints
+}
+
+func findResolverDeclarations(pkgNode gotype.Type) []ResolverDeclaration {
+	var resolvers []ResolverDeclaration
+
+	for i, length := 0, pkgNode.NumChild(); i < length; i++ {
+		if node := pkgNode.Child(i); node.Kind() == gotype.Struct {
+			if _, ok := node.MethodByName(mResolve); ok {
+				log.Printf("\t=> Found possible resolver declaration: %s", node)
+				resolvers = append(resolvers, ResolverDeclaration{
+					node: node,
+				})
+			}
+		}
+	}
+
+	return resolvers
 }
 
 // ServiceDeclaration captures the information of a struct type, that is
@@ -181,6 +202,71 @@ func (e *EndpointDeclaration) Annotations() Annotations {
 
 func (e *EndpointDeclaration) Path() string {
 	return e.Annotations().Get(aPath)
+}
+
+func (e *EndpointDeclaration) InputParams() []ParamDeclaration {
+	var (
+		fn     = e.node.Declaration()
+		params []ParamDeclaration
+	)
+
+	for i, length := 0, fn.NumIn(); i < length; i++ {
+		params = append(params, ParamDeclaration{node: fn.In(i)})
+	}
+
+	return params
+}
+
+func (e *EndpointDeclaration) OutputParams() []ParamDeclaration {
+	var (
+		fn     = e.node.Declaration()
+		params []ParamDeclaration
+	)
+
+	for i, length := 0, fn.NumOut(); i < length; i++ {
+		params = append(params, ParamDeclaration{node: fn.Out(i)})
+	}
+
+	return params
+}
+
+type ResolverDeclaration struct {
+	node gotype.Type
+}
+
+func (r *ResolverDeclaration) Name() string {
+	return r.node.Name()
+}
+
+func (r *ResolverDeclaration) method() gotype.Type {
+	fn, _ := r.node.MethodByName(mResolve)
+	return fn
+}
+
+func (r *ResolverDeclaration) InputParams() []ParamDeclaration {
+	var (
+		fn     = r.method().Declaration()
+		params []ParamDeclaration
+	)
+
+	for i, length := 0, fn.NumIn(); i < length; i++ {
+		params = append(params, ParamDeclaration{node: fn.In(i)})
+	}
+
+	return params
+}
+
+func (r *ResolverDeclaration) OutputParams() []ParamDeclaration {
+	var (
+		fn     = r.method().Declaration()
+		params []ParamDeclaration
+	)
+
+	for i, length := 0, fn.NumOut(); i < length; i++ {
+		params = append(params, ParamDeclaration{node: fn.Out(i)})
+	}
+
+	return params
 }
 
 // ParamDeclaration captures the information for method in- and output params.
@@ -230,30 +316,4 @@ func (p *ParamDeclaration) IsLocal() bool {
 func (p *ParamDeclaration) PointerDepth() int {
 	depth, _ := p.deref()
 	return depth
-}
-
-func (e *EndpointDeclaration) InputParams() []ParamDeclaration {
-	var (
-		fn     = e.node.Declaration()
-		params []ParamDeclaration
-	)
-
-	for i, length := 0, fn.NumIn(); i < length; i++ {
-		params = append(params, ParamDeclaration{node: fn.In(i)})
-	}
-
-	return params
-}
-
-func (e *EndpointDeclaration) OutputParams() []ParamDeclaration {
-	var (
-		fn     = e.node.Declaration()
-		params []ParamDeclaration
-	)
-
-	for i, length := 0, fn.NumOut(); i < length; i++ {
-		params = append(params, ParamDeclaration{node: fn.Out(i)})
-	}
-
-	return params
 }

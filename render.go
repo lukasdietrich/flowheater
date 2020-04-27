@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/dave/jennifer/jen"
@@ -46,6 +45,10 @@ func renderRouterStruct(c *ServiceCollection) jen.Code {
 		StructFunc(func(g *jen.Group) {
 			for _, service := range c.Services {
 				g.Id(service.TypeName).Op("*").Id(service.TypeName)
+			}
+
+			for _, resolver := range c.Resolvers {
+				g.Id(resolver.TypeName).Op("*").Id(resolver.TypeName)
 			}
 		})
 }
@@ -151,15 +154,16 @@ func renderRouterEndpoints(c *ServiceCollection) jen.Code {
 }
 
 func renderEndpointWrapper(endpoint *Endpoint) jen.Code {
-	comment := fmt.Sprintf("%s wraps the endpoint %s#%s.",
-		endpoint.WrapperFunc(), endpoint.Service.TypeName, endpoint.FuncName)
-
 	// func (s *ServiceRouter) func _handle_<Service>_<Endpoint>(
 	//   w http.ResponseWriter,
 	//   r *http.Request,
 	// ) { ... }
 	return jen.
-		Comment(comment).Line().
+		Commentf("%s wraps the endpoint %s#%s.",
+			endpoint.WrapperFunc(),
+			endpoint.Service.TypeName,
+			endpoint.FuncName,
+		).Line().
 		Func().
 		Params(genRouterReceiver).
 		Id(endpoint.WrapperFunc()).
@@ -189,11 +193,7 @@ func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 		callFunc := jen.Id("s").
 			Dot(endpoint.Service.TypeName).
 			Dot(endpoint.FuncName).
-			CallFunc(func(gen *jen.Group) {
-				for _, param := range endpoint.InputVars {
-					gen.Id(strings.Repeat("&", param.PointerDepth) + param.VarName)
-				}
-			})
+			Call(renderInputVars(endpoint.InputVars))
 
 		if !endpoint.ReturnsError && !endpoint.ReturnsValue {
 			gen.Add(callFunc)
@@ -235,13 +235,16 @@ func renderInputParam(gen *jen.Group, param InputParam) {
 
 	case KindPayloadParam:
 		renderPayloadParam(gen, param)
+
+	case KindResolveParam:
+		renderResolverParam(gen, param)
 	}
 
 	gen.Line()
 }
 
 func renderStringParam(gen *jen.Group, param InputParam) {
-	gen.Comment(fmt.Sprintf("Extract url parameter %s.", param.ParamName))
+	gen.Commentf("Extract url parameter %s.", param.ParamName)
 	gen.Id(param.VarName).Op(":=").Qual(pkgChi, "URLParam").Call(
 		jen.Id("r"),
 		jen.Lit(param.ParamName),
@@ -251,7 +254,7 @@ func renderStringParam(gen *jen.Group, param InputParam) {
 func renderConvertParam(gen *jen.Group, param InputParam) {
 	stringVar := param.InputVars[0]
 
-	gen.Comment(fmt.Sprintf("Convert %s to %s.", stringVar.VarName, param.TypeName))
+	gen.Commentf("Convert %s to %s.", stringVar.VarName, param.TypeName)
 
 	switch param.TypeName {
 	case "int", "int8", "int16", "int32", "int64",
@@ -292,6 +295,44 @@ func renderPayloadParam(gen *jen.Group, param InputParam) {
 	).Block(jen.Return().Id("err"))
 }
 
+func renderResolverParam(gen *jen.Group, param InputParam) {
+	gen.Commentf("Resolve parameter using %s.", param.Resolver)
+
+	var stmt jen.Code
+
+	if param.ReturnsError {
+		stmt = jen.List(jen.Id(param.VarName), jen.Id("err"))
+	} else {
+		stmt = jen.Id(param.VarName)
+	}
+
+	gen.Add(stmt).
+		Op(":=").
+		Id("s").Dot(param.Resolver).Dot(mResolve).
+		Call(renderInputVars(param.InputVars))
+
+	if param.ReturnsError {
+		renderIfErr(gen)
+	}
+}
+
 func renderIfErr(gen *jen.Group) {
 	gen.If(jen.Id("err").Op("!=").Nil()).Block(jen.Return().Id("err"))
+}
+
+func renderInputVars(inputVars []InputVar) jen.Code {
+	var varsCode []jen.Code
+
+	for _, inputVar := range inputVars {
+		var prefix string
+		if n := inputVar.PointerDepth; n > 0 {
+			prefix = strings.Repeat("&", n)
+		} else {
+			prefix = strings.Repeat("*", -n)
+		}
+
+		varsCode = append(varsCode, jen.Id(prefix+inputVar.VarName))
+	}
+
+	return jen.List(varsCode...)
 }
