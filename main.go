@@ -6,14 +6,40 @@ import (
 	"path/filepath"
 )
 
-func main() {
-	var (
-		packageFolder string
-	)
+var (
+	packageFolder        string
+	customErrorHandler   bool
+	customRequestReader  bool
+	customResponseWriter bool
+)
 
-	flag.StringVar(&packageFolder, "package", "./rest", "Filepath of source package")
+func init() {
+	log.SetFlags(0)
+
+	flag.StringVar(&packageFolder,
+		"package",
+		"./rest",
+		"Filepath of source package")
+
+	flag.BoolVar(&customErrorHandler,
+		"custom-error-handler",
+		false,
+		"Enable custom error handler as a parameter on the router")
+
+	flag.BoolVar(&customRequestReader,
+		"custom-request-reader",
+		false,
+		"Enable custom request reader as a parameter on the router")
+
+	flag.BoolVar(&customResponseWriter,
+		"custom-response-writer",
+		false,
+		"Enable custom response writer as a parameter on the router")
+
 	flag.Parse()
+}
 
+func main() {
 	// Step 1: Parse the source package and search for annotated services.
 	sourcePackage, err := ParsePackage(packageFolder)
 	if err != nil {

@@ -41,7 +41,7 @@ flowheater will try its best to resolve them.
 #### Native parameter
 
 There are three special types, that you can declare and flowheater injects them
-as is. `*net/http.Request` and `net/http.ResponseWriter` are the directly passed
+as is. `*net/http.Request` and `net/http.ResponseWriter` are directly passed
 forward from the `net/http.Handler` interface. Additionally `context.Context` is
 resolved as the requests context.
 
