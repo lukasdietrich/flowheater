@@ -290,12 +290,12 @@ func renderEndpointWrapperBody(endpoint *Endpoint) func(*jen.Group) {
 					Id("s").Dot(genCustomResponse).Call(
 					jen.Id("w"),
 					jen.Id("r"),
-					jen.Op("&").Id("val"),
+					jen.Id("val"),
 				)
 			} else {
 				gen.Return().
 					Qual(pkgJson, "NewEncoder").Call(jen.Id("w")).
-					Dot("Encode").Call(jen.Op("&").Id("val"))
+					Dot("Encode").Call(jen.Id("val"))
 			}
 		}
 	}
